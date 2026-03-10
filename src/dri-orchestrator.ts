@@ -50,28 +50,37 @@ export function createDriPlan(incidentDescription: string, port = DEFAULT_PORT):
 
 ${ctx}
 
-## Step 1: Load Incident from Kusto (IcmDataWarehouse)
+## Step 1: Load Incident Details from IcmDataWarehouse (via local ADX proxy)
 
-Also query the **kusto-icm** MCP server (IcmDataWarehouse cluster) for structured data:
+Fetch incident details by calling the local orchestrator ADX endpoint — **no browser, no Playwright needed**:
 
-\`\`\`kusto
-Incidents
-| where IncidentId == ${icmId}
-| project IncidentId, Title, Severity, Status, OwningTeamName, CreateDate, MitigateDate, ResolveDate, Summary, Keywords, RoutingId
+\`\`\`
+GET http://localhost:${port}/api/adx/icm/${icmId}
 \`\`\`
 
-Pull the discussion timeline:
+This executes the Kusto query:
 \`\`\`kusto
-Incidents
+IncidentDescriptions
 | where IncidentId == ${icmId}
-| join kind=inner IncidentDiscussions on IncidentId
-| project CreateDate, Author, Text
-| order by CreateDate asc
+\`\`\`
+against \`icmcluster.kusto.windows.net / IcmDataWarehouse\` using a bearer token automatically sourced from ambient-mcp.
+
+Use the **Bash** tool to call the endpoint:
+\`\`\`bash
+curl -s http://localhost:${port}/api/adx/icm/${icmId}
 \`\`\`
 
-Merge dashboard data and Kusto data — prefer dashboard values where both exist.
+Parse the \`rows\` array from the JSON response — each row is a flat object with column names as keys.
 
-If the ICM ID is UNKNOWN or both sources return no results, derive context from:
+Key columns to extract from \`IncidentDescriptions\`:
+- \`IncidentId\`, \`Title\`, \`Severity\`, \`Status\`
+- \`OwningTeamName\`, \`OwningContactAlias\`
+- \`CreateDate\`, \`MitigateDate\`, \`ResolveDate\`
+- \`Summary\`, \`AISummary\`, \`AuthoredSummary\`, \`Keywords\`
+- \`Forest\`, \`DataResidencyRegion\`
+- \`TroubleshootingNotes\`, \`RoutingId\`
+
+If the endpoint returns an error (e.g. token expired), note the error and derive context from:
 "${incident}"
 
 Write your findings to **${sharedWs}/step1_incident.json**:
@@ -101,7 +110,7 @@ Write your findings to **${sharedWs}/step1_incident.json**:
 }
 \`\`\`
 
-Output a concise summary of findings including the incident title, status, severity, owning team, and key points from the AI summary.`,
+Output a concise summary: incident title, severity, status, owning team, and key points from the AI summary.`,
       },
 
       // ── STEP 2 ── Extract Identifiers (deps: step 1) ──────────────────────

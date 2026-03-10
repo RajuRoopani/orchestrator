@@ -143,6 +143,78 @@ function readAmbientIcmToken(): AmbientToken | null {
   } catch { return null; }
 }
 
+/* ─── Ambient-MCP Kusto token reader ────────────────────────────────────────── */
+const KUSTO_DOMAIN = 'icmcluster.kusto.windows.net';
+
+function readAmbientKustoToken(): AmbientToken | null {
+  try {
+    if (!fs.existsSync(AMBIENT_STORE)) return null;
+    const store = JSON.parse(fs.readFileSync(AMBIENT_STORE, 'utf-8')) as {
+      tokens?: Record<string, { headers?: Record<string, string>; status?: string; capturedAt?: string }>;
+    };
+    const entry = (store.tokens ?? {})[KUSTO_DOMAIN];
+    if (!entry) return null;
+    const auth = entry.headers?.['Authorization'] ?? entry.headers?.['authorization'] ?? '';
+    if (!auth) return null;
+    const raw = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+    if (!raw) return null;
+    return { token: raw, domain: KUSTO_DOMAIN, status: entry.status ?? 'unknown', capturedAt: entry.capturedAt ?? '' };
+  } catch { return null; }
+}
+
+type KustoV2Frame =
+  | { FrameType: 'DataTable'; TableName: string; Columns: { ColumnName: string }[]; Rows: unknown[][] }
+  | { FrameType: string };
+
+/** Execute a Kusto query against IcmDataWarehouse and return rows as objects */
+async function runKustoQuery(kql: string): Promise<Record<string, unknown>[]> {
+  const raw = readAmbientKustoToken();
+  if (!raw) throw new Error('No Kusto token found in ambient-mcp store for icmcluster.kusto.windows.net');
+
+  // Read extra headers the browser used (x-ms-user-id, x-ms-app) for auth context
+  const storeEntry = (() => {
+    try {
+      const store = JSON.parse(fs.readFileSync(AMBIENT_STORE, 'utf-8')) as {
+        tokens?: Record<string, { headers?: Record<string, string> }>;
+      };
+      return store.tokens?.[KUSTO_DOMAIN]?.headers ?? {};
+    } catch { return {} as Record<string, string>; }
+  })();
+
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${raw.token}`,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+  if (storeEntry['x-ms-user-id']) headers['x-ms-user-id'] = storeEntry['x-ms-user-id'];
+  if (storeEntry['x-ms-app']) headers['x-ms-app'] = storeEntry['x-ms-app'];
+
+  const resp = await fetch('https://icmcluster.kusto.windows.net/v2/rest/query', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ db: 'IcmDataWarehouse', csl: kql }),
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`Kusto query failed (${resp.status}): ${body.slice(0, 300)}`);
+  }
+
+  // v2 REST API returns a list of frames; the data is in the PrimaryResult frame
+  const frames = await resp.json() as KustoV2Frame[];
+  const dataFrame = frames.find(
+    (f): f is KustoV2Frame & { FrameType: 'DataTable'; TableName: string; Columns: { ColumnName: string }[]; Rows: unknown[][] } =>
+      f.FrameType === 'DataTable' && (f as { TableName?: string }).TableName === 'PrimaryResult'
+  ) ?? frames.find(
+    (f): f is KustoV2Frame & { FrameType: 'DataTable'; Columns: { ColumnName: string }[]; Rows: unknown[][] } =>
+      f.FrameType === 'DataTable' && Array.isArray((f as { Rows?: unknown }).Rows)
+  );
+
+  if (!dataFrame || !('Columns' in dataFrame)) return [];
+  const cols = dataFrame.Columns.map(c => c.ColumnName);
+  return dataFrame.Rows.map(row => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+}
+
 /* ─── Chat persistence ───────────────────────────────────────────────────────── */
 function loadChat(): { role: string; text: string }[] {
   try { if (fs.existsSync(CHAT_FILE)) return JSON.parse(fs.readFileSync(CHAT_FILE, 'utf-8')); }
@@ -635,6 +707,24 @@ app.get('/api/ambient/icm-token', (_req, res) => {
   icmCache = null;
   const alias = aliasFromJwt(entry.token);
   res.json({ found: true, token: entry.token, alias, domain: entry.domain, status: entry.status, capturedAt: entry.capturedAt });
+});
+
+// ─── ADX / Kusto ICM query endpoint ──────────────────────────────────────────
+
+app.get('/api/adx/icm/:icmId', async (req, res) => {
+  const { icmId } = req.params;
+  if (!icmId || !/^\d+$/.test(icmId)) {
+    res.status(400).json({ error: 'Invalid ICM ID — must be numeric' });
+    return;
+  }
+  try {
+    const kql = `IncidentDescriptions | where IncidentId == ${icmId}`;
+    const rows = await runKustoQuery(kql);
+    res.json({ icmId, query: kql, rows, rowCount: rows.length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: message });
+  }
 });
 
 // ─── Chat persistence endpoints ───────────────────────────────────────────────
