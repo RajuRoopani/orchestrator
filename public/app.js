@@ -34,7 +34,8 @@ function handleMessage(msg) {
     case 'task_completed':  onTaskCompleted(msg.planId, msg.taskId, msg.success); break;
     case 'execution_done':  onExecutionDone(msg.stats); break;
     case 'dri_summary':       onDriSummary(msg.planId, msg.content, msg.icmId); break;
-    case 'activity_summary':  renderActivitySummary(msg.summary, true); break;
+    case 'activity_summary':       renderActivitySummary(msg.summary, true); break;
+    case 'ambient_token_refreshed': showToast('⚡ ICM token refreshed from ambient-mcp', 'info'); break;
     case 'error':
       showToast('⚠ ' + msg.message, 'error');
       appendChatMessage('assistant', `⚠ Error: ${msg.message}`);
@@ -1086,22 +1087,67 @@ loadActivitySummary();
 // Always restore ICM token to server on page load (server loses it on restart)
 (function restoreIcmTokenOnLoad() {
   rebuildTeamDropdown(); // populate dropdown with saved teams + selection
-  const token = localStorage.getItem(ICM_TOKEN_KEY);
-  const teamId = localStorage.getItem(ICM_TEAM_KEY);
-  if (!token) return;
-  fetch('/api/icm/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, teamId: teamId ? Number(teamId) : null }),
-  }).then(r => r.json()).then(d => {
-    const label = [d.alias, d.teamId ? `team ${d.teamId}` : ''].filter(Boolean).join(' · ');
+
+  function applyTokenToUI(label, isAmbient) {
+    const aliasEl = document.getElementById('icmAliasLabel');
     if (label) {
-      document.getElementById('icmAliasLabel').textContent = label;
-      document.getElementById('icmAliasLabel').style.display = 'inline';
+      aliasEl.innerHTML = isAmbient
+        ? `${label} <span style="background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);border-radius:4px;padding:1px 5px;font-size:0.75em;margin-left:4px;">⚡ auto</span>`
+        : label;
+      aliasEl.style.display = 'inline';
     }
     document.getElementById('icmFilters').style.display = 'flex';
     document.getElementById('icmRefreshBtn').style.display = 'inline-flex';
-  }).catch(() => {});
+  }
+
+  // Try ambient-mcp token first
+  fetch('/api/ambient/icm-token')
+    .then(r => r.json())
+    .then(d => {
+      if (d.found && d.token) {
+        // Store in localStorage so it persists
+        localStorage.setItem(ICM_TOKEN_KEY, d.token);
+        const teamId = localStorage.getItem(ICM_TEAM_KEY);
+        const label = [d.alias || 'ambient token', teamId ? `team ${teamId}` : ''].filter(Boolean).join(' · ');
+        applyTokenToUI(label, true);
+        showToast('⚡ ICM token auto-loaded from ambient-mcp', 'success');
+        // Re-apply team filter if saved
+        if (teamId) {
+          fetch('/api/icm/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: d.token, teamId: Number(teamId) }),
+          }).catch(() => {});
+        }
+      } else {
+        // Fall back to localStorage token
+        const token = localStorage.getItem(ICM_TOKEN_KEY);
+        const teamId = localStorage.getItem(ICM_TEAM_KEY);
+        if (!token) return;
+        fetch('/api/icm/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, teamId: teamId ? Number(teamId) : null }),
+        }).then(r => r.json()).then(data => {
+          const label = [data.alias, data.teamId ? `team ${data.teamId}` : ''].filter(Boolean).join(' · ');
+          applyTokenToUI(label, false);
+        }).catch(() => {});
+      }
+    })
+    .catch(() => {
+      // ambient endpoint failed — fall back to localStorage
+      const token = localStorage.getItem(ICM_TOKEN_KEY);
+      const teamId = localStorage.getItem(ICM_TEAM_KEY);
+      if (!token) return;
+      fetch('/api/icm/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, teamId: teamId ? Number(teamId) : null }),
+      }).then(r => r.json()).then(data => {
+        const label = [data.alias, data.teamId ? `team ${data.teamId}` : ''].filter(Boolean).join(' · ');
+        applyTokenToUI(label, false);
+      }).catch(() => {});
+    });
 })();
 
 connect();

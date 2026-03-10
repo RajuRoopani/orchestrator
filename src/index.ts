@@ -106,6 +106,43 @@ async function fetchActiveIcms(): Promise<IcmEntry[]> {
   });
 }
 
+/* ─── Ambient-MCP token reader ───────────────────────────────────────────────── */
+const AMBIENT_STORE = path.join(os.homedir(), '.claude', 'browser-context-mcp', 'store.json');
+
+const ICM_DOMAINS = [
+  'prod.microsofticm.com',
+  'portal.microsofticm.com',
+  'upsapi.prod.microsofticm.com',
+  'oncallapi.prod.microsofticm.com',
+];
+
+interface AmbientToken {
+  token: string;
+  domain: string;
+  status: string;
+  capturedAt: string;
+}
+
+function readAmbientIcmToken(): AmbientToken | null {
+  try {
+    if (!fs.existsSync(AMBIENT_STORE)) return null;
+    const store = JSON.parse(fs.readFileSync(AMBIENT_STORE, 'utf-8')) as {
+      tokens?: Record<string, { headers?: Record<string, string>; status?: string; capturedAt?: string }>;
+    };
+    const tokens = store.tokens ?? {};
+    for (const domain of ICM_DOMAINS) {
+      const entry = tokens[domain];
+      if (!entry) continue;
+      const auth = entry.headers?.['Authorization'] ?? entry.headers?.['authorization'] ?? '';
+      if (!auth) continue;
+      const raw = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+      if (!raw) continue;
+      return { token: raw, domain, status: entry.status ?? 'unknown', capturedAt: entry.capturedAt ?? '' };
+    }
+    return null;
+  } catch { return null; }
+}
+
 /* ─── Chat persistence ───────────────────────────────────────────────────────── */
 function loadChat(): { role: string; text: string }[] {
   try { if (fs.existsSync(CHAT_FILE)) return JSON.parse(fs.readFileSync(CHAT_FILE, 'utf-8')); }
@@ -585,6 +622,21 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
 });
 
+// ─── Ambient-MCP auto-token endpoint ─────────────────────────────────────────
+
+app.get('/api/ambient/icm-token', (_req, res) => {
+  const entry = readAmbientIcmToken();
+  if (!entry) {
+    res.status(404).json({ found: false, message: 'No ICM token found in ambient-mcp store.' });
+    return;
+  }
+  // Auto-apply to server state so the caller doesn't need a second round-trip
+  icmBearerToken = entry.token;
+  icmCache = null;
+  const alias = aliasFromJwt(entry.token);
+  res.json({ found: true, token: entry.token, alias, domain: entry.domain, status: entry.status, capturedAt: entry.capturedAt });
+});
+
 // ─── Chat persistence endpoints ───────────────────────────────────────────────
 
 app.get('/api/chat', (_req, res) => {
@@ -620,6 +672,23 @@ app.post('/api/activity-summary/generate', (_req, res) => {
 httpServer.listen(PORT, () => {
   console.log(`🤖 Claude Orchestrator running at http://localhost:${PORT}`);
   console.log(`   WebSocket ready on ws://localhost:${PORT}`);
+
+  // Auto-load ICM token from ambient-mcp on startup
+  const ambientEntry = readAmbientIcmToken();
+  if (ambientEntry) {
+    icmBearerToken = ambientEntry.token;
+    console.log(`[Ambient] ICM token auto-loaded from ${ambientEntry.domain} (${ambientEntry.status})`);
+  }
+  // Refresh ambient token every 10 minutes silently
+  setInterval(() => {
+    const fresh = readAmbientIcmToken();
+    if (fresh && fresh.token !== icmBearerToken) {
+      icmBearerToken = fresh.token;
+      icmCache = null;
+      console.log(`[Ambient] ICM token refreshed from ${fresh.domain}`);
+      wsManager.broadcast({ type: 'ambient_token_refreshed', domain: fresh.domain, capturedAt: fresh.capturedAt } as never);
+    }
+  }, 10 * 60 * 1000);
 
   // Generate first activity summary 15s after startup, then every hour
   setTimeout(() => generateActivitySummary().catch(console.error), 15000);
