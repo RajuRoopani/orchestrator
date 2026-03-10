@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Orchestrator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <span class="logo">🤖</span>
+        <h1>Claude Orchestrator</h1>
+      </div>
+      <div class="header-right">
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting…</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Layout -->
+    <main class="main">
+      <!-- Chat Panel -->
+      <aside class="chat-panel">
+        <div class="chat-messages" id="chatMessages">
+          <div class="message assistant">
+            <div class="message-bubble">
+              <p>Hello! I'm your AI orchestrator. Tell me what you'd like to build or accomplish, and I'll create a hierarchical execution plan for you.</p>
+              <p style="margin-top: 8px; opacity: 0.7; font-size: 0.85em;">Example: "Create a REST API in Python with FastAPI that manages a todo list with SQLite"</p>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <textarea
+            id="chatInput"
+            placeholder="Describe your task… or /DRI [incident] to investigate"
+            rows="3"
+            class="chat-input"
+          ></textarea>
+          <button id="sendBtn" class="send-btn" onclick="sendMessage()">
+            <span class="btn-text">Generate Plan</span>
+            <span class="btn-icon">→</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Right Panel -->
+      <section class="right-panel">
+        <!-- Tabs -->
+        <div class="tabs">
+          <button class="tab active" data-tab="plan" onclick="switchTab('plan')">
+            📋 Plan
+          </button>
+          <button class="tab" data-tab="dashboard" onclick="switchTab('dashboard')">
+            ⚡ Dashboard
+          </button>
+          <button class="tab" data-tab="dri" onclick="switchTab('dri')">
+            🚨 DRI
+          </button>
+          <button class="tab" data-tab="icm" onclick="switchTab('icm')">
+            🔥 ICM Dashboard
+          </button>
+          <button class="tab" data-tab="history" onclick="switchTab('history')">
+            🕒 History
+          </button>
+        </div>
+
+        <!-- Plan Tab -->
+        <div class="tab-content active" id="tab-plan">
+          <div class="plan-empty" id="planEmpty">
+            <div class="empty-icon">📋</div>
+            <p>No plan yet. Type a task in the chat to get started.</p>
+          </div>
+
+          <div id="planContainer" style="display:none">
+            <div class="plan-header" style="display:none">
+              <div class="plan-info">
+                <h2 id="planTitle"></h2>
+                <p id="planDescription" class="plan-description"></p>
+                <div class="plan-meta">
+                  <span class="meta-badge">
+                    <span class="meta-icon">⏱</span>
+                    <span id="planDuration"></span>
+                  </span>
+                  <span class="meta-badge">
+                    <span class="meta-icon">📌</span>
+                    <span id="planTaskCount"></span>
+                  </span>
+                </div>
+              </div>
+              <button id="executeBtn" class="execute-btn" onclick="executeplan()">
+                <span>✅ Approve &amp; Execute</span>
+              </button>
+            </div>
+
+            <div class="task-tree" id="taskTree"></div>
+          </div>
+        </div>
+
+        <!-- DRI Tab -->
+        <div class="tab-content" id="tab-dri">
+          <div class="dri-empty" id="driEmpty">
+            <div class="empty-icon">🚨</div>
+            <p>Type <code>/DRI [incident details]</code> in the chat to start an investigation.</p>
+            <p class="dri-hint">Example: /DRI Bot fails to respond in tenant xyz-corp, getting 403 errors since 14:00 UTC</p>
+          </div>
+          <div id="driContainer" style="display:none"></div>
+        </div>
+
+        <!-- ICM Dashboard Tab -->
+        <div class="tab-content" id="tab-icm">
+          <!-- Always-visible header bar -->
+          <div class="icm-header-bar">
+            <div class="icm-filters" id="icmFilters" style="display:none">
+              <div class="icm-team-picker">
+                <select id="icmTeamIdFilter" class="icm-teamid-select" onchange="onTeamIdFilterChange()" title="Filter by team"></select>
+                <button class="icm-team-add-btn" onclick="promptAddTeam()" title="Add team ID">＋</button>
+              </div>
+              <input id="icmFilterTitle" class="icm-filter-input" placeholder="Filter by title…" oninput="applyIcmFilters()" />
+              <select id="icmFilterSev" class="icm-filter-select" onchange="applyIcmFilters()">
+                <option value="">All severities</option>
+                <option value="1">Sev 1</option>
+                <option value="2">Sev 2</option>
+                <option value="3">Sev 3</option>
+                <option value="4">Sev 4</option>
+              </select>
+              <select id="icmFilterStatus" class="icm-filter-select" onchange="applyIcmFilters()">
+                <option value="">All statuses</option>
+                <option value="Active" selected>Active</option>
+                <option value="Mitigated">Mitigated</option>
+              </select>
+            </div>
+            <div class="icm-header-right">
+              <span class="icm-alias-label" id="icmAliasLabel" style="display:none"></span>
+              <span class="icm-count" id="icmCount"></span>
+              <span class="icm-fetched" id="icmFetchedAt"></span>
+              <button class="icm-refresh-btn" id="icmRefreshBtn" onclick="refreshIcms()" style="display:none">↻ Refresh</button>
+              <button class="icm-gear-btn" onclick="toggleIcmTokenPanel()" title="Set / change ICM token">⚙ Token</button>
+            </div>
+          </div>
+
+          <!-- Token panel (slides in below header) -->
+          <div class="icm-token-panel" id="icmTokenBanner" style="display:none">
+            <div class="icm-token-hint">🔑 Paste your <strong>Authorization</strong> header from <a href="https://portal.microsofticm.com" target="_blank">portal.microsofticm.com</a> — DevTools → Network → any API request → copy the <code>Authorization</code> value</div>
+            <div class="icm-token-row">
+              <input id="icmTokenInput" class="icm-token-input" type="password" placeholder="eyJ0eX… (with or without 'Bearer' prefix)" />
+              <button class="icm-token-save-btn" onclick="saveIcmToken()">Save &amp; Load</button>
+              <button class="icm-token-clear-btn" onclick="clearIcmToken()">✕ Clear</button>
+              <button class="icm-token-cancel-btn" onclick="hideIcmTokenPanel()">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Stats bar -->
+          <div class="icm-stats-bar" id="icmStatsBar" style="display:none">
+            <div class="icm-stat-item">
+              <div class="icm-stat-dot red"></div>
+              <div><div class="icm-stat-value red" id="icmStatSev1">0</div><div class="icm-stat-label">Sev 1</div></div>
+            </div>
+            <div class="icm-stat-item">
+              <div class="icm-stat-dot amber"></div>
+              <div><div class="icm-stat-value amber" id="icmStatSev2">0</div><div class="icm-stat-label">Sev 2</div></div>
+            </div>
+            <div class="icm-stat-item">
+              <div class="icm-stat-dot blue"></div>
+              <div><div class="icm-stat-value blue" id="icmStatSev3">0</div><div class="icm-stat-label">Sev 3</div></div>
+            </div>
+            <div class="icm-stat-item">
+              <div class="icm-stat-dot purple"></div>
+              <div><div class="icm-stat-value purple" id="icmStatActive">0</div><div class="icm-stat-label">Active</div></div>
+            </div>
+          </div>
+
+          <div id="icmTableWrap" class="icm-table-wrap">
+            <div class="icm-loading" id="icmLoading" style="display:none">
+              <div class="icm-spinner"></div>
+              <span>Fetching active ICMs… (this may take ~30s)</span>
+            </div>
+            <div class="icm-empty" id="icmEmpty">Click <strong>⚙ Token</strong> to set your ICM authorization token, then Refresh to load incidents.</div>
+            <table class="icm-table" id="icmTable" style="display:none">
+              <thead>
+                <tr>
+                  <th>Sev</th>
+                  <th>ICM ID</th>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Owning Team</th>
+                  <th>Contact</th>
+                  <th>Created</th>
+                  <th>Flags</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="icmTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- History Tab -->
+        <div class="tab-content" id="tab-history">
+          <div class="history-toolbar">
+            <span class="history-title">Past DRI Investigations</span>
+            <button class="history-refresh-btn" onclick="loadHistoryTab()">↻ Refresh</button>
+          </div>
+          <div id="historyList" class="history-list">
+            <div class="history-empty">Loading history…</div>
+          </div>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div class="tab-content" id="tab-dashboard">
+          <div class="dashboard-empty" id="dashboardEmpty">
+            <div class="empty-icon">⚡</div>
+            <p>Execution dashboard will appear here once you approve a plan.</p>
+          </div>
+
+          <div id="dashboardContainer" style="display:none">
+            <div class="stats-bar" id="statsBar" style="display:none">
+              <div class="stat-item">
+                <span class="stat-value" id="statTotal">0</span>
+                <span class="stat-label">Total</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-value success" id="statCompleted">0</span>
+                <span class="stat-label">Done</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-value running" id="statRunning">0</span>
+                <span class="stat-label">Running</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-value error" id="statFailed">0</span>
+                <span class="stat-label">Failed</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-value" id="statTime">0s</span>
+                <span class="stat-label">Elapsed</span>
+              </div>
+            </div>
+            <div class="task-cards" id="taskCards"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toastContainer"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
