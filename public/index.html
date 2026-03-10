@@ -212,6 +212,23 @@
 
         <!-- Dashboard Tab -->
         <div class="tab-content" id="tab-dashboard">
+
+          <!-- Activity Feed — always visible -->
+          <div class="activity-feed-wrap">
+            <div class="activity-feed-header">
+              <span class="activity-feed-title">📊 Hourly Activity Feed</span>
+              <span class="activity-feed-sub">Updates every hour · powered by ambient-mcp memory</span>
+              <button class="activity-refresh-btn" onclick="fetch('/api/activity-summary/generate',{method:'POST'}).then(()=>showToast('Generating…','info'))">↻ Generate Now</button>
+            </div>
+            <div id="activityFeed">
+              <div id="activityEmpty" class="activity-empty">
+                <div class="empty-icon">📊</div>
+                <p>Your hourly activity summary will appear here.<br>A summary is generated 15s after startup, then every hour.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Plan execution section -->
           <div class="dashboard-empty" id="dashboardEmpty">
             <div class="empty-icon">⚡</div>
             <p>Execution dashboard will appear here once you approve a plan.</p>

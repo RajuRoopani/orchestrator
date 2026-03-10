@@ -33,7 +33,8 @@ function handleMessage(msg) {
     case 'task_output':     appendTaskOutput(msg.planId, msg.taskId, msg.chunk, msg.eventType); break;
     case 'task_completed':  onTaskCompleted(msg.planId, msg.taskId, msg.success); break;
     case 'execution_done':  onExecutionDone(msg.stats); break;
-    case 'dri_summary':     onDriSummary(msg.planId, msg.content, msg.icmId); break;
+    case 'dri_summary':       onDriSummary(msg.planId, msg.content, msg.icmId); break;
+    case 'activity_summary':  renderActivitySummary(msg.summary, true); break;
     case 'error':
       showToast('⚠ ' + msg.message, 'error');
       appendChatMessage('assistant', `⚠ Error: ${msg.message}`);
@@ -105,35 +106,67 @@ function appendChatMessage(role, text, streaming = false) {
   return bubble;
 }
 
-/* ─── Chat History (localStorage) ───────────────────────────────────────────── */
+/* ─── Chat History (server-backed, localStorage fallback) ────────────────────── */
 const CHAT_STORAGE_KEY = 'orchestrator_chat_history';
+let _chatSaveTimer = null;
 
-function saveChatHistory() {
-  const messages = [...document.querySelectorAll('#chatMessages .message')].map((el) => ({
+function collectChatMessages() {
+  return [...document.querySelectorAll('#chatMessages .message')].map((el) => ({
     role: el.classList.contains('user') ? 'user' : 'assistant',
     text: el.querySelector('.message-bubble')?.textContent ?? '',
   }));
+}
+
+function saveChatHistory() {
+  const messages = collectChatMessages();
+  // localStorage fallback (instant)
   try { localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-200))); } catch {}
+  // Debounce server save — wait 800ms after last message
+  clearTimeout(_chatSaveTimer);
+  _chatSaveTimer = setTimeout(() => {
+    fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: messages.slice(-200) }),
+    }).catch(() => {});
+  }, 800);
+}
+
+function renderChatMessages(messages) {
+  if (!messages.length) return;
+  const container = document.getElementById('chatMessages');
+  container.innerHTML = '';
+  for (const { role, text } of messages) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `message ${role}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'message-bubble';
+    bubble.textContent = text;
+    wrapper.appendChild(bubble);
+    container.appendChild(wrapper);
+  }
+  container.scrollTop = container.scrollHeight;
 }
 
 function restoreChatHistory() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]');
-    if (!saved.length) return;
-    const container = document.getElementById('chatMessages');
-    // Clear the default welcome message if we have real history
-    container.innerHTML = '';
-    for (const { role, text } of saved) {
-      const wrapper = document.createElement('div');
-      wrapper.className = `message ${role}`;
-      const bubble = document.createElement('div');
-      bubble.className = 'message-bubble';
-      bubble.textContent = text;
-      wrapper.appendChild(bubble);
-      container.appendChild(wrapper);
-    }
-    container.scrollTop = container.scrollHeight;
-  } catch {}
+  // Try server first, fall back to localStorage
+  fetch('/api/chat')
+    .then((r) => r.json())
+    .then((messages) => {
+      if (Array.isArray(messages) && messages.length) {
+        renderChatMessages(messages);
+      } else {
+        // Fallback to localStorage
+        const saved = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]');
+        renderChatMessages(saved);
+      }
+    })
+    .catch(() => {
+      try {
+        const saved = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? '[]');
+        renderChatMessages(saved);
+      } catch {}
+    });
 }
 
 function appendPlanToken(token) {
@@ -970,6 +1003,76 @@ function deleteHistory(planId, btn) {
     .catch(() => showToast('Failed to delete', 'error'));
 }
 
+/* ─── Activity Summary ───────────────────────────────────────────────────────── */
+function renderActivitySummary(summary, isNew = false) {
+  const feed = document.getElementById('activityFeed');
+  if (!feed || !summary) return;
+
+  document.getElementById('activityEmpty').style.display = 'none';
+
+  const card = document.createElement('div');
+  card.className = 'activity-card' + (isNew ? ' activity-card--new' : '');
+
+  const genTime = new Date(summary.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const sectionsHtml = (summary.sections || []).map((s) => {
+    if (!s.items?.length) return '';
+    const items = s.items.map((it) => `<li>${escHtml(it)}</li>`).join('');
+    return `<div class="act-section">
+      <div class="act-section-title">${s.icon} ${escHtml(s.title)}</div>
+      <ul class="act-items">${items}</ul>
+    </div>`;
+  }).join('');
+
+  const insightsHtml = (summary.insights || []).map((i) =>
+    `<span class="act-insight">💡 ${escHtml(i)}</span>`
+  ).join('');
+
+  const browsersHtml = (summary.browsers || []).slice(0, 4).map((b) =>
+    `<a class="act-browser-link" href="${escHtml(b.url)}" target="_blank" title="${escHtml(b.url)}">
+      <span class="act-browser-time">${escHtml(b.time)}</span>
+      <span class="act-browser-title">${escHtml(b.title)}</span>
+    </a>`
+  ).join('');
+
+  card.innerHTML = `
+    <div class="act-header">
+      <div class="act-headline">${escHtml(summary.headline)}</div>
+      <div class="act-meta">
+        <span class="act-period">⏱ ${escHtml(summary.periodLabel)}</span>
+        <span class="act-generated">Generated ${genTime}</span>
+        ${isNew ? '<span class="act-badge-new">NEW</span>' : ''}
+      </div>
+    </div>
+    <div class="act-body">
+      <div class="act-sections">${sectionsHtml}</div>
+      ${browsersHtml ? `<div class="act-browsers"><div class="act-section-title">🌐 Recent Browser Activity</div>${browsersHtml}</div>` : ''}
+    </div>
+    ${insightsHtml ? `<div class="act-insights">${insightsHtml}</div>` : ''}
+  `;
+
+  // Prepend newest at top
+  feed.insertBefore(card, feed.firstChild);
+
+  // Keep max 5 cards in DOM
+  while (feed.children.length > 6) feed.removeChild(feed.lastChild);
+
+  if (isNew) {
+    showToast('📊 Activity summary updated', 'info');
+    // Switch to dashboard tab if not already there
+  }
+}
+
+function loadActivitySummary() {
+  fetch('/api/activity-summary')
+    .then((r) => r.json())
+    .then(({ latest, history }) => {
+      const items = latest ? [latest, ...(history || []).filter((h) => h.generatedAt !== latest.generatedAt)] : (history || []);
+      items.slice(0, 5).reverse().forEach((s) => renderActivitySummary(s, false));
+    })
+    .catch(() => {});
+}
+
 /* ─── Keyboard Shortcut ─────────────────────────────────────────────────────── */
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && document.activeElement === document.getElementById('chatInput')) {
@@ -978,6 +1081,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 restoreChatHistory();
+loadActivitySummary();
 
 // Always restore ICM token to server on page load (server loses it on restart)
 (function restoreIcmTokenOnLoad() {

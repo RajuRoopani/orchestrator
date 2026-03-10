@@ -45,6 +45,7 @@ export type WSMessage =
   | { type: 'task_completed'; planId: string; taskId: string; success: boolean }
   | { type: 'execution_done'; stats: ExecutionStats }
   | { type: 'dri_summary'; planId: string; content: string; icmId?: string }
+  | { type: 'activity_summary'; summary: unknown }
   | { type: 'error'; message: string }
   | { type: 'connected' };
 

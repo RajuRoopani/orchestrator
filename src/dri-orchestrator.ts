@@ -8,7 +8,9 @@ function extractIcmId(text: string): string | null {
   return m ? m[1] : null;
 }
 
-export function createDriPlan(incidentDescription: string): Plan {
+const DEFAULT_PORT = 3333;
+
+export function createDriPlan(incidentDescription: string, port = DEFAULT_PORT): Plan {
   const planId   = uuidv4();
   const icmId    = extractIcmId(incidentDescription) ?? 'UNKNOWN';
   const incident = incidentDescription.slice(0, 2000);
@@ -407,12 +409,12 @@ Write findings to **${sharedWs}/step6_related.json**:
 Output a clear summary of related incidents and documentation links.`,
       },
 
-      // ── STEP 11 ── Generate HTML Report (deps: steps 3–6) ──────────────────
+      // ── STEP 11 ── Compile Report JSON (deps: steps 3–6) ───────────────────
       {
         id:           'step_7_generate_report',
-        title:        'Generate Rich HTML Investigation Report',
-        description:  'Compile all findings into a self-contained HTML report and open in browser (Step 11)',
-        complexity:   'high',
+        title:        'Compile Investigation Report',
+        description:  'Synthesise all findings into a structured report JSON',
+        complexity:   'medium',
         dependencies: ['step_3_kusto_acl_shard', 'step_4_ado_tsgs', 'step_5_geneva_logs', 'step_6_related_icms_docs'],
         parallel_ok:  false,
         allowAllTools: true,
@@ -423,8 +425,7 @@ Output a clear summary of related incidents and documentation links.`,
 
 ${ctx}
 
----
-## Step 11: Generate Rich HTML Report
+## Step 11: Compile Investigation Report
 
 Read ALL findings files from **${sharedWs}/**:
 - \`step1_incident.json\`   — ICM details & discussion timeline
@@ -434,277 +435,59 @@ Read ALL findings files from **${sharedWs}/**:
 - \`step5_geneva.json\`      — Geneva log URLs
 - \`step6_related.json\`     — Related ICMs and documentation
 
-Synthesise all findings and write a **complete self-contained HTML file** to:
-\`/tmp/icm_${icmId}_report.html\`
+Synthesise all findings and write a compact JSON report to **${sharedWs}/report.json**:
 
-The HTML MUST use the exact template below. Replace **every** \`{{PLACEHOLDER}}\` with actual data.
-Use \`N/A\` or \`Unknown\` for missing fields — never leave a placeholder unfilled.
-
-\`\`\`html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ICM {{ICM_ID}} — DRI Report</title>
-<style>
-:root {
-  --sev1:#c50f1f;--sev1-bg:#fde7e9;--sev2:#da3b01;--sev2-bg:#fde7e9;
-  --sev3:#c19c00;--sev3-bg:#fff8e1;--sev4:#0078d4;--sev4-bg:#e8f4fd;
-  --active:#c50f1f;--active-bg:#fde7e9;--mitigated:#da3b01;--mitigated-bg:#fff4e5;
-  --resolved:#107c10;--resolved-bg:#e6f4ea;--ms-blue:#0078d4;--ms-dark:#1b1b1b;
-  --surface:#fff;--surface2:#f8f9fa;--surface3:#f0f2f5;--border:#e1e4e8;
-  --text-primary:#1b1b1b;--text-secondary:#616161;--text-muted:#8a8a8a;
-  --success:#107c10;--warning:#c19c00;--danger:#c50f1f;
-  --radius:8px;--radius-lg:12px;
-  --shadow:0 2px 8px rgba(0,0,0,.08);--shadow-lg:0 4px 20px rgba(0,0,0,.12);
+\`\`\`json
+{
+  "icmId": "${icmId}",
+  "title": "",
+  "severity": 0,
+  "status": "",
+  "owningTeam": "",
+  "createDate": "",
+  "mitigateDate": "",
+  "resolveDate": "",
+  "forest": "",
+  "region": "",
+  "rootCauseHypothesis": "",
+  "identifiers": { "tenantId":"", "userId":"", "botId":"", "threadId":"", "correlationId":"" },
+  "errorSignal": "",
+  "evidenceChecklist": [
+    { "label": "", "status": "pass|fail|warn|unknown", "detail": "" }
+  ],
+  "nextSteps": [
+    { "title": "", "detail": "", "priority": "critical|high|medium" }
+  ],
+  "genevaUrls": { "logMessage":"", "incomingRequest":"", "outgoingRequest":"" },
+  "discussions": [{ "time":"", "author":"", "text":"" }],
+  "relatedIcms": [{ "id":"", "title":"", "severity":0, "status":"", "createDate":"" }],
+  "docs": [{ "title":"", "url":"", "description":"" }],
+  "escalationPath": ["Team A → Team B → Team C"],
+  "escalationNotes": "",
+  "generatedAt": ""
 }
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,sans-serif;background:var(--surface3);color:var(--text-primary);line-height:1.5;font-size:14px}
-.header{background:var(--ms-dark);color:#fff;padding:0 32px;height:56px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100;box-shadow:0 1px 4px rgba(0,0,0,.3)}
-.header-logo{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:600}
-.hd{width:1px;height:24px;background:rgba(255,255,255,.2)}
-.header-title{font-size:14px;color:rgba(255,255,255,.7)}
-.header-icm{font-size:14px;font-weight:700;color:#60cdff}
-.hs{flex:1}
-.header-meta{font-size:12px;color:rgba(255,255,255,.5)}
-.print-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;padding:5px 14px;border-radius:4px;font-size:12px;cursor:pointer}
-.print-btn:hover{background:rgba(255,255,255,.18)}
-.page{max-width:1280px;margin:0 auto;padding:24px 24px 48px}
-.hero{background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:24px 28px;margin-bottom:20px;border-top:4px solid var(--sev-color,var(--ms-blue))}
-.hero-badges{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.hero-title{font-size:20px;font-weight:700;line-height:1.3}
-.hero-meta-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--border)}
-.meta-item label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);margin-bottom:3px}
-.meta-item span{font-size:13px;font-weight:500}
-.mono{font-family:'Cascadia Code',Consolas,monospace;font-size:12px}
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
-.badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
-.badge-sev1,.badge-sev2{color:var(--sev1);background:var(--sev1-bg)}
-.badge-sev3{color:var(--sev3);background:var(--sev3-bg)}
-.badge-sev4{color:var(--sev4);background:var(--sev4-bg)}
-.badge-active{color:var(--active);background:var(--active-bg)}
-.badge-mitigated{color:var(--mitigated);background:var(--mitigated-bg)}
-.badge-resolved{color:var(--resolved);background:var(--resolved-bg)}
-.badge-info{color:var(--ms-blue);background:var(--sev4-bg)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-.badge-pulse{animation:pulse 1.8s infinite}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}
-@media(max-width:900px){.grid-2{grid-template-columns:1fr}}
-.card{background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow);overflow:hidden;margin-bottom:0}
-.card-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
-.card-header-icon{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:15px}
-.card-header h2{font-size:13px;font-weight:700;flex:1}
-.card-count{font-size:11px;background:var(--surface3);border-radius:100px;padding:2px 8px;color:var(--text-secondary);font-weight:600}
-.card-body{padding:16px 20px}
-.id-table{width:100%;border-collapse:collapse}
-.id-table tr:not(:last-child) td{border-bottom:1px solid var(--border)}
-.id-table td{padding:8px 0;vertical-align:middle}
-.id-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);white-space:nowrap;padding-right:16px;width:150px}
-.id-value-wrap{display:flex;align-items:center;gap:8px}
-.id-value{font-family:'Cascadia Code',Consolas,monospace;font-size:12px;word-break:break-all}
-.copy-btn{flex-shrink:0;background:var(--surface3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;color:var(--text-secondary);transition:all .15s;white-space:nowrap}
-.copy-btn:hover{background:var(--ms-blue);color:#fff;border-color:var(--ms-blue)}
-.copy-btn.copied{background:var(--success);color:#fff;border-color:var(--success)}
-.stack-trace{background:#1e1e1e;padding:16px 18px;overflow:auto;font-family:'Cascadia Code',Consolas,monospace;font-size:12px;line-height:1.7;max-height:420px}
-.line-error{color:#f48771;display:block}.line-warn{color:#cca700;display:block}.line-info{color:#9cdcfe;display:block}
-.line-at{color:#c586c0;display:block}.line-normal{color:#d4d4d4;display:block}
-.line-highlight{color:#ffff00;background:rgba(255,255,0,.08);display:block;font-weight:700}
-.timeline{position:relative;padding-left:28px}
-.timeline::before{content:'';position:absolute;left:8px;top:4px;bottom:4px;width:2px;background:var(--border)}
-.timeline-item{position:relative;margin-bottom:20px}
-.timeline-item:last-child{margin-bottom:0}
-.timeline-dot{position:absolute;left:-24px;top:4px;width:12px;height:12px;border-radius:50%;background:var(--ms-blue);border:2px solid var(--surface);box-shadow:0 0 0 2px var(--ms-blue)}
-.timeline-dot.error{background:var(--danger);box-shadow:0 0 0 2px var(--danger)}
-.timeline-dot.success{background:var(--success);box-shadow:0 0 0 2px var(--success)}
-.timeline-dot.warn{background:var(--warning);box-shadow:0 0 0 2px var(--warning)}
-.timeline-time{font-size:11px;color:var(--text-muted);font-family:monospace;margin-bottom:2px}
-.timeline-author{font-size:11px;font-weight:700;color:var(--ms-blue)}
-.timeline-content{font-size:13px;margin-top:3px}
-.timeline-content code{background:var(--surface3);padding:1px 5px;border-radius:3px;font-size:11px;font-family:'Cascadia Code',Consolas,monospace}
-.evidence-list{list-style:none}
-.evidence-item{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
-.evidence-item:last-child{border-bottom:none}
-.evidence-icon{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;margin-top:1px;font-weight:700}
-.evidence-icon.pass{background:var(--resolved-bg);color:var(--success)}
-.evidence-icon.fail{background:var(--active-bg);color:var(--danger)}
-.evidence-icon.warn{background:var(--sev3-bg);color:var(--warning)}
-.evidence-icon.unknown{background:var(--surface3);color:var(--text-muted)}
-.evidence-label{font-size:13px;font-weight:600}
-.evidence-detail{font-size:12px;color:var(--text-secondary);margin-top:2px}
-.action-list{list-style:none}
-.action-item{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
-.action-item:last-child{border-bottom:none}
-.action-num{min-width:24px;height:24px;background:var(--ms-blue);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;margin-top:1px}
-.action-num.pri-critical{background:var(--danger)}
-.action-num.pri-high{background:var(--mitigated)}
-.action-num.pri-medium{background:var(--warning)}
-.action-title{font-size:13px;font-weight:600}
-.action-body{font-size:12px;color:var(--text-secondary);margin-top:3px}
-.action-body code{background:var(--surface3);padding:1px 5px;border-radius:3px;font-family:'Cascadia Code',Consolas,monospace;font-size:11px}
-.action-tag{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:1px 7px;border-radius:100px;margin-left:6px;vertical-align:middle}
-.tag-customer{background:#e8f4fd;color:#0078d4}
-.tag-oncall{background:#fde7e9;color:#c50f1f}
-.tag-platform{background:#fff8e1;color:#c19c00}
-.geneva-grid{display:flex;flex-direction:column;gap:10px}
-.geneva-card{background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
-.geneva-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-bottom:6px}
-.geneva-timestamp{font-family:monospace;font-size:11px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 8px;color:var(--ms-blue);display:inline-block;margin-bottom:8px}
-.geneva-links{display:flex;flex-wrap:wrap;gap:8px}
-.geneva-link{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:4px;font-size:12px;font-weight:600;text-decoration:none;transition:all .15s;border:1px solid}
-.geneva-link.log{background:#1e3a5f;color:#60cdff;border-color:#1e4a7a}
-.geneva-link.log:hover{background:#1a3d6e}
-.geneva-link.incoming{background:#1e3b2a;color:#6ccb7e;border-color:#1e5c30}
-.geneva-link.incoming:hover{background:#1a4a28}
-.geneva-link.outgoing{background:#3b2a1e;color:#e8a86e;border-color:#5c3a1e}
-.geneva-link.outgoing:hover{background:#4a2a1a}
-.icm-table{width:100%;border-collapse:collapse}
-.icm-table th{background:var(--surface3);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);padding:8px 12px;text-align:left;border-bottom:2px solid var(--border)}
-.icm-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
-.icm-table tr:hover td{background:var(--surface3)}
-.icm-link{color:var(--ms-blue);text-decoration:none;font-weight:600}
-.icm-link:hover{text-decoration:underline}
-.rca-box{background:linear-gradient(135deg,#fff8e1 0%,#fde7e9 100%);border:1px solid #f0c060;border-left:4px solid var(--warning);border-radius:var(--radius);padding:16px 18px;margin-bottom:20px}
-.rca-box h3{font-size:13px;font-weight:700;color:var(--warning);margin-bottom:8px}
-.rca-box p{font-size:13px;line-height:1.6}
-.doc-list{list-style:none}
-.doc-item{padding:9px 0;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:10px}
-.doc-item:last-child{border-bottom:none}
-.doc-link{color:var(--ms-blue);font-size:13px;font-weight:500;text-decoration:none}
-.doc-link:hover{text-decoration:underline}
-.doc-desc{font-size:12px;color:var(--text-secondary);margin-top:2px}
-.escalation-path{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:8px}
-.escalation-team{background:var(--surface3);border:1px solid var(--border);border-radius:var(--radius);padding:8px 14px;font-size:12px;font-weight:600;display:flex;flex-direction:column;gap:2px}
-.escalation-team small{font-size:10px;color:var(--text-muted);font-weight:400}
-.escalation-arrow{font-size:18px;color:var(--text-muted);padding:0 4px}
-.escalation-notes{margin-top:14px;font-size:13px;color:var(--text-secondary)}
-.mb-20{margin-bottom:20px}
-.report-footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--text-muted)}
-@media print{body{background:#fff}.header{background:#1b1b1b!important;print-color-adjust:exact}.card,.hero{box-shadow:none;border:1px solid var(--border)}.print-btn{display:none}}
-</style>
-</head>
-<body>
-<header class="header">
-  <div class="header-logo">
-    <svg width="22" height="22" viewBox="0 0 24 24"><rect x="2" y="2" width="9" height="9" fill="#f25022"/><rect x="13" y="2" width="9" height="9" fill="#7fba00"/><rect x="2" y="13" width="9" height="9" fill="#00a4ef"/><rect x="13" y="13" width="9" height="9" fill="#ffb900"/></svg>
-    Teams DRI
-  </div>
-  <div class="hd"></div>
-  <span class="header-title">Incident Report</span>
-  <span class="header-icm">ICM {{ICM_ID}}</span>
-  <div class="hs"></div>
-  <span class="header-meta">{{REPORT_TIMESTAMP}}</span>
-  <button class="print-btn" onclick="window.print()">⎙ Export PDF</button>
-</header>
-<div class="page">
-  <div class="hero" style="--sev-color:{{SEV_COLOR}}">
-    <div class="hero-badges">
-      <span class="badge badge-sev{{SEVERITY}}"><span class="badge-dot"></span>SEV {{SEVERITY}}</span>
-      <span class="badge badge-{{STATUS_CLASS}}"><span class="badge-dot {{STATUS_PULSE}}"></span>{{STATUS}}</span>
-      {{EXTRA_TAGS}}
-    </div>
-    <div class="hero-title">{{INCIDENT_TITLE}}</div>
-    <div class="hero-meta-grid">
-      <div class="meta-item"><label>ICM ID</label><span class="mono">{{ICM_ID}}</span></div>
-      <div class="meta-item"><label>Created</label><span>{{CREATE_DATE}}</span></div>
-      <div class="meta-item"><label>Age</label><span>{{INCIDENT_AGE}}</span></div>
-      <div class="meta-item"><label>Mitigated</label><span>{{MITIGATE_DATE}}</span></div>
-      <div class="meta-item"><label>Resolved</label><span>{{RESOLVE_DATE}}</span></div>
-      <div class="meta-item"><label>Owning Team</label><span>{{OWNING_TEAM}}</span></div>
-      <div class="meta-item"><label>Forest / Region</label><span>{{FOREST}} / {{REGION}}</span></div>
-      <div class="meta-item"><label>Last Updated</label><span>{{LAST_UPDATED}}</span></div>
-    </div>
-  </div>
-  <div class="rca-box">
-    <h3>⚡ Root Cause Hypothesis</h3>
-    <p>{{ROOT_CAUSE_HYPOTHESIS}}</p>
-  </div>
-  <div class="grid-2 mb-20">
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#e8f4fd">🔑</div><h2>Resource Identifiers</h2></div>
-      <div class="card-body"><table class="id-table">{{IDENTIFIER_ROWS}}</table></div>
-    </div>
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#fde7e9">🔥</div><h2>Error Stack Trace</h2><span class="badge badge-active" style="font-size:10px">{{ERROR_CODE}}</span></div>
-      <div class="card-body" style="padding:0"><div class="stack-trace">{{STACK_TRACE_HTML}}</div></div>
-    </div>
-  </div>
-  <div class="grid-2 mb-20">
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#e6f4ea">✅</div><h2>Evidence Checklist</h2></div>
-      <div class="card-body"><ul class="evidence-list">{{EVIDENCE_ITEMS}}</ul></div>
-    </div>
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#fff8e1">⚡</div><h2>Recommended Next Steps</h2></div>
-      <div class="card-body"><ol class="action-list">{{ACTION_ITEMS}}</ol></div>
-    </div>
-  </div>
-  <div class="grid-2 mb-20">
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#1e1e1e;color:#60cdff">📊</div><h2>Geneva Log Links</h2></div>
-      <div class="card-body"><div class="geneva-grid">{{GENEVA_SECTIONS}}</div></div>
-    </div>
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#f0f2f5">💬</div><h2>Discussion Timeline</h2><span class="card-count">{{DISCUSSION_COUNT}} entries</span></div>
-      <div class="card-body" style="max-height:380px;overflow-y:auto"><div class="timeline">{{TIMELINE_ITEMS}}</div></div>
-    </div>
-  </div>
-  <div class="grid-2 mb-20">
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#fde7e9">🔗</div><h2>Related ICMs</h2><span class="card-count">{{RELATED_ICM_COUNT}}</span></div>
-      <div class="card-body" style="padding:0">
-        <table class="icm-table">
-          <thead><tr><th>ICM</th><th>Title</th><th>Sev</th><th>Status</th><th>Date</th></tr></thead>
-          <tbody>{{RELATED_ICM_ROWS}}</tbody>
-        </table>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-header"><div class="card-header-icon" style="background:#e8f4fd">📚</div><h2>Documentation &amp; TSG</h2></div>
-      <div class="card-body"><ul class="doc-list">{{DOC_ITEMS}}</ul></div>
-    </div>
-  </div>
-  <div class="card mb-20">
-    <div class="card-header"><div class="card-header-icon" style="background:#fde7e9">🚨</div><h2>Escalation Path</h2></div>
-    <div class="card-body">
-      <div class="escalation-path">{{ESCALATION_STEPS}}</div>
-      <div class="escalation-notes">{{ESCALATION_NOTES}}</div>
-    </div>
-  </div>
-  <div class="report-footer">
-    <span>ICM <strong>{{ICM_ID}}</strong> · Teams DRI Automated Report</span>
-    <span>Generated by Claude DRI Agent · {{REPORT_TIMESTAMP}}</span>
-  </div>
-</div>
-<script>
-function copyId(btn,text){navigator.clipboard.writeText(text).then(()=>{btn.textContent='Copied!';btn.classList.add('copied');setTimeout(()=>{btn.textContent='Copy';btn.classList.remove('copied')},2000)});}
-(function(){const m={'1':'#c50f1f','2':'#da3b01','3':'#c19c00','4':'#0078d4'};const s=document.querySelector('[class*="badge-sev"]');if(s){const n=s.className.match(/badge-sev(\\d)/)?.[1];if(n)document.querySelector('.hero').style.setProperty('--sev-color',m[n]);}})();
-</script>
-</body>
-</html>
 \`\`\`
 
-After writing the HTML file, output a **markdown summary** for the DRI tab with:
+After writing the JSON, output a **markdown summary**:
 
 ## 🔍 Summary
-[2-3 sentences about the incident and root cause]
+[2–3 sentences about the incident and root cause hypothesis]
 
 ## 📊 Key Identifiers
 - **Tenant:** ...
-- **Bot/App:** ...
-- **Thread:** ...
+- **Correlation ID:** ...
 
 ## ⚡ Immediate Next Steps
 1. [action — owner]
 2. [action — owner]
 
 ## 📊 Geneva Logs
-- [LogMessage URL]
-- [IncomingRequest URL]
-- [OutgoingRequest URL]
+- LogMessage: [url]
+- IncomingRequest: [url]
 
 ## 🔗 Report
-Full HTML report written to: \`/tmp/icm_${icmId}_report.html\``,
+Report JSON written to: \`${sharedWs}/report.json\`
+View full HTML report at: http://localhost:${port}/api/dri/${icmId}/report`,
       },
     ],
   };
