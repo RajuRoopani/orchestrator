@@ -22,7 +22,8 @@ let planningStartTime = null;
 
 /* ─── WebSocket ─────────────────────────────────────────────────────────────── */
 function connect() {
-  ws = new WebSocket(`ws://${location.host}`);
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${wsProto}//${location.host}`);
   ws.onopen = () => console.log('[WS] Connected');
   ws.onclose = () => { setConnectionStatus(false); setTimeout(connect, 2000); };
   ws.onerror = (e) => console.error('[WS] Error', e);
