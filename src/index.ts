@@ -255,7 +255,7 @@ function getRecentObservations(hoursBack = 1): string {
 function getRecentSessions(hoursBack = 1): string {
   const since = Date.now() - hoursBack * 3600000;
   return queryClaudeMem(
-    `SELECT title, project, created_at FROM session_summaries WHERE created_at_epoch > ${since} ORDER BY created_at_epoch DESC LIMIT 10`
+    `SELECT project, request, completed, created_at FROM session_summaries WHERE created_at_epoch > ${since} ORDER BY created_at_epoch DESC LIMIT 10`
   ) || '';
 }
 
@@ -281,8 +281,7 @@ function getBrowserContext(): { summary: string; visits: { title: string; url: s
 async function generateActivitySummary(): Promise<void> {
   console.log('[Activity] Generating hourly summary…');
   try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic();
+    const { spawn } = require('child_process') as typeof import('child_process');
 
     const observations = getRecentObservations(1);
     const sessions     = getRecentSessions(1);
@@ -309,14 +308,45 @@ Return ONLY valid JSON (no markdown fences) with this exact shape:
 }
 Rules: ≤4 items/section, ≤3 insights, ≤80 chars/item, mention specific file/project names.`;
 
-    const msg = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 900,
-      messages: [{ role: 'user', content: prompt }],
+    const text = await new Promise<string>((resolve, reject) => {
+      const env = { ...process.env };
+      delete env['CLAUDECODE'];
+      delete env['CLAUDE_CODE_ENTRYPOINT'];
+      delete env['ANTHROPIC_API_KEY'];
+
+      const proc = spawn('claude', [
+        '-p', prompt,
+        '--model', 'claude-haiku-4-5-20251001',
+        '--output-format', 'stream-json',
+        '--verbose',
+      ], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+
+      let fullText = '';
+      let buf = '';
+      let errOut = '';
+      proc.stdout.on('data', (d: Buffer) => {
+        buf += d.toString();
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const ev = JSON.parse(line) as { type: string; message?: { content?: { type: string; text?: string }[] } };
+            if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
+              fullText += ev.message!.content!.filter((c) => c.type === 'text').map((c) => c.text ?? '').join('');
+            }
+          } catch { /* ignore */ }
+        }
+      });
+      proc.stderr.on('data', (d: Buffer) => { errOut += d.toString(); });
+      const timer = setTimeout(() => { proc.kill(); reject(new Error('Activity generation timed out')); }, 90000);
+      proc.on('close', (code: number) => {
+        clearTimeout(timer);
+        if (code !== 0) reject(new Error(`claude exited ${code}: ${errOut.slice(0, 200)}`));
+        else resolve(fullText.trim().replace(/^```json\s*/i, '').replace(/```\s*$/, ''));
+      });
     });
 
-    const text = ((msg.content[0] as { text: string }).text).trim()
-      .replace(/^```json\s*/i, '').replace(/```\s*$/, '');
     const parsed = JSON.parse(text) as Omit<ActivitySummary, 'generatedAt' | 'periodLabel' | 'browsers'>;
 
     const summary: ActivitySummary = {
@@ -340,7 +370,9 @@ Rules: ≤4 items/section, ≤3 insights, ≤80 chars/item, mention specific fil
     wsManager.broadcast({ type: 'activity_summary', summary });
     console.log('[Activity] Summary broadcast — headline:', summary.headline);
   } catch (err) {
-    console.error('[Activity] Generation failed:', (err as Error).message);
+    const msg = (err as Error).message;
+    console.error('[Activity] Generation failed:', msg);
+    wsManager.broadcast({ type: 'activity_error', message: msg } as never);
   }
 }
 

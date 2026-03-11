@@ -34,7 +34,8 @@ function handleMessage(msg) {
     case 'task_completed':  onTaskCompleted(msg.planId, msg.taskId, msg.success); break;
     case 'execution_done':  onExecutionDone(msg.stats); break;
     case 'dri_summary':       onDriSummary(msg.planId, msg.content, msg.icmId); break;
-    case 'activity_summary':       renderActivitySummary(msg.summary, true); break;
+    case 'activity_summary':       renderActivitySummary(msg.summary, true); setActivityBtnReady(); break;
+    case 'activity_error':         showToast('❌ Activity generation failed: ' + msg.message, 'error'); setActivityBtnReady(); break;
     case 'ambient_token_refreshed': showToast('⚡ ICM token refreshed from ambient-mcp', 'info'); break;
     case 'error':
       showToast('⚠ ' + msg.message, 'error');
@@ -1062,6 +1063,25 @@ function renderActivitySummary(summary, isNew = false) {
     showToast('📊 Activity summary updated', 'info');
     // Switch to dashboard tab if not already there
   }
+}
+
+function setActivityBtnReady() {
+  const btn = document.getElementById('activityGenBtn');
+  if (!btn) return;
+  btn.disabled = false;
+  btn.textContent = '↻ Generate Now';
+}
+
+function triggerActivityGenerate() {
+  const btn = document.getElementById('activityGenBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+  fetch('/api/activity-summary/generate', { method: 'POST' })
+    .then((r) => r.json())
+    .then(() => showToast('Generating activity summary…', 'info'))
+    .catch((err) => {
+      showToast('❌ Request failed: ' + err.message, 'error');
+      setActivityBtnReady();
+    });
 }
 
 function loadActivitySummary() {

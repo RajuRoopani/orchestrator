@@ -26,7 +26,8 @@ It also ships with a first-class **Microsoft ICM (Incident Management) Dashboard
 | 🧠 **AI Orchestration** | Describe a task → Claude generates a hierarchical plan → sub-agents execute each step |
 | ⚡ **Real-time Dashboard** | Live WebSocket updates as agents work through plan steps |
 | 🔥 **ICM Dashboard** | Browse active Microsoft ICM incidents with Fluent Glass UI — severity badges, stats bar, team filters |
-| 🚨 **DRI Investigation** | One-command `/DRI [incident]` workflow to kick off a structured on-call investigation |
+| 🚨 **DRI Investigation** | One-command `/DRI [incident]` workflow — 7-step automated triage using Kusto, ADO, Geneva log links, and related ICMs |
+| 📊 **Hourly Activity Feed** | Auto-generated summary of your last hour of coding activity (claude-mem + browser context), refreshable on demand |
 | 📋 **History** | Persistent session history stored locally at `~/.orchestrator/history/` |
 | 🎨 **Fluent Glass UI** | Deep blue/purple glassmorphism theme — gradient severity badges, glowing stat dots, smooth transitions |
 
@@ -35,18 +36,24 @@ It also ships with a first-class **Microsoft ICM (Incident Management) Dashboard
 ## Tech Stack
 
 - **Backend:** Node.js + Express + TypeScript
-- **AI:** Anthropic Claude API (`@anthropic-ai/sdk`)
+- **AI:** Claude CLI (`claude -p`) — no API key required, uses your Claude Code session
 - **Real-time:** WebSockets (`ws`)
 - **Frontend:** Vanilla HTML/CSS/JS (zero framework, zero build step)
-- **ICM API:** `https://prod.microsofticm.com/api2/incidentapi`
+- **ICM API:** `https://prod.microsofticm.com/api2/incidentapi` (token auto-loaded from ambient-mcp)
+- **Kusto:** `icmcluster.kusto.windows.net / IcmDataWarehouse` via REST API (ambient-mcp token)
+- **ADO MCP:** `@azure-devops/mcp` with `az cli` auth (`rroopani@microsoft.com`)
 
 ---
 
 ## Prerequisites
 
 - Node.js 18+
-- An [Anthropic API key](https://console.anthropic.com/)
-- (Optional) Microsoft ICM bearer token for the ICM Dashboard
+- Claude Code CLI (`claude`) authenticated and in your `PATH`
+- (Optional) `az cli` logged into the MSFT corp tenant for ADO MCP tools:
+  ```bash
+  az login --tenant 72f988bf-86f1-41af-91ab-2d7cd011db47 --allow-no-subscriptions
+  ```
+- (Optional) Microsoft ICM bearer token — auto-loaded from `ambient-mcp` if available
 
 ---
 
@@ -71,10 +78,9 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and set your Anthropic API key:
+Edit `.env` — no API key needed, the server uses the `claude` CLI:
 
 ```env
-ANTHROPIC_API_KEY=sk-ant-...
 PORT=3333          # optional, default 3333
 ```
 
@@ -111,22 +117,44 @@ Type in the chat:
 /DRI Bot fails to respond in tenant xyz-corp, getting 403 errors since 14:00 UTC
 ```
 
-This kicks off a structured DRI (Designated Responsible Individual) investigation workflow with automated triage steps.
+This kicks off a 7-step automated DRI investigation:
+
+| Step | What it does |
+|------|-------------|
+| 1 | **Load ICM** — queries `IcmDataWarehouse` via Kusto REST API |
+| 2 | **Extract identifiers** — TenantId, BotId, ThreadId, CorrelationId |
+| 3 | **Kusto triage** — tenant anomalies, ACL issues, hot shard analysis |
+| 4 | **ADO work items** — related bugs, hotfixes, TSGs in O365Exchange |
+| 5 | **Geneva log URLs** — pre-built deep-links for LogMessage / IncomingRequest / OutgoingRequest |
+| 6 | **Related ICMs & docs** — similar incidents + learn.microsoft.com resources |
+| 7 | **Compile report** — structured JSON + HTML report at `/api/dri/:icmId/report` |
+
+> **ADO auth:** Requires `az cli` logged into the MSFT corp tenant (see Prerequisites). Run `az login --tenant 72f988bf-86f1-41af-91ab-2d7cd011db47` once.
 
 ### ICM Dashboard
 
+The token is **auto-loaded** from `ambient-mcp` if you have the browser context MCP running. If not:
+
 1. Go to the **ICM Dashboard** tab.
 2. Click **⚙ Token** in the top-right.
-3. Paste your `Authorization` header value from `portal.microsofticm.com`
-   (DevTools → Network → any API request → copy the `Authorization` header value).
-4. Select your team from the dropdown and click **Save & Load**.
+3. Paste your `Authorization` header from `portal.microsofticm.com`
+   (DevTools → Network → any API request → copy the `Authorization` value).
+4. Select your team and click **Save & Load**.
 
 The dashboard shows:
 - Severity 1/2/3/Active counts in the stats bar
 - Per-incident severity badges, status pills, flags (Outage / CRI)
 - Direct **🚨 Investigate** button to launch a DRI workflow for any incident
 
-> **Token note:** Bearer tokens from the ICM portal expire. When you see a `401`, re-paste a fresh token via ⚙ Token. The token is stored in `localStorage` and automatically re-sent to the server on each page load.
+> The ambient-mcp token refreshes automatically every 10 minutes in the background.
+
+### Hourly Activity Feed
+
+The **Dashboard** tab includes an auto-generated summary of your last hour of activity — what you built, browsed, and focused on — powered by `claude-mem` and `ambient-mcp`.
+
+- Generates automatically 15s after server start, then every hour
+- Click **↻ Generate Now** to refresh on demand
+- Shows a loading state and surfaces errors if generation fails
 
 ---
 
@@ -161,12 +189,18 @@ orchestrator/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/plan` | Generate a Claude execution plan |
-| `POST` | `/api/execute` | Execute a plan step |
-| `POST` | `/api/dri` | Start a DRI investigation |
+| `POST` | `/api/execute` | Execute a plan |
+| `POST` | `/api/dri` | Start a DRI investigation (auto-executes) |
+| `GET`  | `/api/dri/:icmId/report` | Render full HTML DRI report |
 | `POST` | `/api/icm/token` | Set ICM bearer token + team ID |
-| `GET`  | `/api/icm/incidents` | Fetch active ICM incidents (cached 5 min) |
-| `GET`  | `/api/history` | List past sessions |
-| `WS`   | `/ws` | Real-time execution updates |
+| `GET`  | `/api/icm/active` | Fetch active ICM incidents (cached 5 min) |
+| `POST` | `/api/icm/refresh` | Bust the ICM cache |
+| `GET`  | `/api/ambient/icm-token` | Auto-load ICM token from ambient-mcp |
+| `GET`  | `/api/adx/icm/:icmId` | Query IcmDataWarehouse via Kusto REST |
+| `GET`  | `/api/activity-summary` | Get latest + history of activity summaries |
+| `POST` | `/api/activity-summary/generate` | Trigger on-demand activity summary |
+| `GET`  | `/api/history` | List past DRI sessions |
+| `WS`   | `ws://localhost:3333` | Real-time execution + activity updates |
 
 ---
 
@@ -174,8 +208,9 @@ orchestrator/
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | ✅ | — | Your Anthropic API key |
 | `PORT` | ❌ | `3333` | HTTP server port |
+
+> No API key needed — all LLM calls use the `claude` CLI which authenticates via your Claude Code session.
 
 ---
 

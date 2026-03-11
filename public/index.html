@@ -218,7 +218,7 @@
             <div class="activity-feed-header">
               <span class="activity-feed-title">📊 Hourly Activity Feed</span>
               <span class="activity-feed-sub">Updates every hour · powered by ambient-mcp memory</span>
-              <button class="activity-refresh-btn" onclick="fetch('/api/activity-summary/generate',{method:'POST'}).then(()=>showToast('Generating…','info'))">↻ Generate Now</button>
+              <button class="activity-refresh-btn" id="activityGenBtn" onclick="triggerActivityGenerate()">↻ Generate Now</button>
             </div>
             <div id="activityFeed">
               <div id="activityEmpty" class="activity-empty">
