@@ -294,6 +294,11 @@ function executePlan(planId) {
 
   renderDashboardPanel(plan);
   switchTab('dashboard');
+  // Scroll execution panel into view after the tab is visible
+  setTimeout(() => {
+    const panel = document.getElementById(`dash-${planId}`);
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
 
   const startTime = Date.now();
   const timerHandle = setInterval(() => {
