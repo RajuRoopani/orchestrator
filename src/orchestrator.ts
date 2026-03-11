@@ -27,7 +27,13 @@ Rules:
 - complexity: "low" (<5min), "medium" (5-15min), "high" (>15min)
 - dependencies: array of task IDs that must finish first ([] for none)
 - parallel_ok: true if safe to run concurrently with siblings
-- claude_prompt must be fully self-contained with all context`;
+- claude_prompt must be fully self-contained with all context
+
+Available local proxy endpoints (use Bash/curl, no auth needed):
+- Microsoft Graph: GET http://localhost:3333/api/graph?path=/me  (any Graph v1.0 path)
+  e.g. /me, /me/memberOf, /me/manager, /users/{id}, /groups
+- Kusto/ADX (IcmDataWarehouse): GET http://localhost:3333/api/adx/icm/{icmId}
+- ICM active incidents: GET http://localhost:3333/api/icm/active`;
 
 const TIMEOUT_MS = 120_000; // 2 minutes
 

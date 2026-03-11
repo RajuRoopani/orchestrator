@@ -759,6 +759,37 @@ app.get('/api/adx/icm/:icmId', async (req, res) => {
   }
 });
 
+// ─── Microsoft Graph proxy ────────────────────────────────────────────────────
+// Uses az cli token so sub-agents can call Graph without managing auth themselves
+// Usage: GET /api/graph?path=/me  or  /api/graph?path=/me/photo/$value
+
+async function getAzCliToken(resource: string): Promise<string> {
+  const { execSync } = require('child_process') as typeof import('child_process');
+  const raw = execSync(
+    `az account get-access-token --resource ${resource} --query accessToken -o tsv`,
+    { encoding: 'utf-8', timeout: 15000 }
+  ).trim();
+  if (!raw) throw new Error('az cli returned empty token — run: az login --tenant 72f988bf-86f1-41af-91ab-2d7cd011db47');
+  return raw;
+}
+
+app.get('/api/graph', async (req, res) => {
+  const graphPath = (req.query['path'] as string) || '/me';
+  if (!graphPath.startsWith('/')) {
+    res.status(400).json({ error: 'path must start with /' });
+    return;
+  }
+  try {
+    const token = await getAzCliToken('https://graph.microsoft.com');
+    const url = `https://graph.microsoft.com/v1.0${graphPath}`;
+    const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    const body = await resp.text();
+    res.status(resp.status).setHeader('Content-Type', resp.headers.get('content-type') ?? 'application/json').send(body);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // ─── Chat persistence endpoints ───────────────────────────────────────────────
 
 app.get('/api/chat', (_req, res) => {

@@ -1,3 +1,14 @@
+/* ─── Resilient JSON parser ──────────────────────────────────────────────────── */
+async function safeJson(response) {
+  const text = await response.text();
+  if (!text.trim()) throw new Error(`Server returned empty response (HTTP ${response.status}) — is the server running?`);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Server returned non-JSON (HTTP ${response.status}): ${text.slice(0, 120)}`);
+  }
+}
+
 /* ─── State ─────────────────────────────────────────────────────────────────── */
 let ws = null;
 // Map of planId → plan object
@@ -84,7 +95,7 @@ function sendMessage() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message: text }),
   })
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then((d) => { if (!d.success) throw new Error(d.error || 'Unknown error'); })
     .catch((err) => {
       clearPlanningTimer();
@@ -153,7 +164,7 @@ function renderChatMessages(messages) {
 function restoreChatHistory() {
   // Try server first, fall back to localStorage
   fetch('/api/chat')
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then((messages) => {
       if (Array.isArray(messages) && messages.length) {
         renderChatMessages(messages);
@@ -289,7 +300,7 @@ function executePlan(planId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ planId }),
   })
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then((d) => {
       if (!d.success) throw new Error(d.error);
       appendChatMessage('assistant', `⚡ Executing: "${plan.title}"…`);
@@ -511,7 +522,7 @@ function sendDriCommand(incident) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message: incident }),
   })
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then((d) => { if (!d.success) throw new Error(d.error || 'Unknown error'); })
     .catch((err) => {
       clearPlanningTimer();
@@ -785,7 +796,7 @@ function saveIcmToken() {
   if (teamIdVal) localStorage.setItem(ICM_TEAM_KEY, teamIdVal);
   else localStorage.removeItem(ICM_TEAM_KEY);
   fetch('/api/icm/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, teamId: teamIdVal ? Number(teamIdVal) : null }) })
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then((d) => {
       hideIcmTokenPanel();
       const label = [d.alias, d.teamId ? `team ${d.teamId}` : ''].filter(Boolean).join(' · ');
@@ -820,7 +831,7 @@ function loadIcms(forceRefresh = false) {
   document.getElementById('icmCount').textContent = '';
 
   const doFetch = () => fetch('/api/icm/active')
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then((d) => {
       document.getElementById('icmLoading').style.display = 'none';
       document.getElementById('icmRefreshBtn').disabled = false;
@@ -954,7 +965,7 @@ function loadHistoryTab() {
   const list = document.getElementById('historyList');
   list.innerHTML = '<div class="history-empty">Loading…</div>';
   fetch('/api/history')
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then((items) => renderHistoryList(items))
     .catch(() => { list.innerHTML = '<div class="history-empty">Failed to load history.</div>'; });
 }
@@ -1076,7 +1087,7 @@ function triggerActivityGenerate() {
   const btn = document.getElementById('activityGenBtn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
   fetch('/api/activity-summary/generate', { method: 'POST' })
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then(() => showToast('Generating activity summary…', 'info'))
     .catch((err) => {
       showToast('❌ Request failed: ' + err.message, 'error');
@@ -1086,7 +1097,7 @@ function triggerActivityGenerate() {
 
 function loadActivitySummary() {
   fetch('/api/activity-summary')
-    .then((r) => r.json())
+    .then((r) => safeJson(r))
     .then(({ latest, history }) => {
       const items = latest ? [latest, ...(history || []).filter((h) => h.generatedAt !== latest.generatedAt)] : (history || []);
       items.slice(0, 5).reverse().forEach((s) => renderActivitySummary(s, false));
@@ -1122,7 +1133,7 @@ loadActivitySummary();
 
   // Try ambient-mcp token first
   fetch('/api/ambient/icm-token')
-    .then(r => r.json())
+    .then(r => safeJson(r))
     .then(d => {
       if (d.found && d.token) {
         // Store in localStorage so it persists
@@ -1148,7 +1159,7 @@ loadActivitySummary();
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token, teamId: teamId ? Number(teamId) : null }),
-        }).then(r => r.json()).then(data => {
+        }).then(r => safeJson(r)).then(data => {
           const label = [data.alias, data.teamId ? `team ${data.teamId}` : ''].filter(Boolean).join(' · ');
           applyTokenToUI(label, false);
         }).catch(() => {});
@@ -1163,7 +1174,7 @@ loadActivitySummary();
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, teamId: teamId ? Number(teamId) : null }),
-      }).then(r => r.json()).then(data => {
+      }).then(r => safeJson(r)).then(data => {
         const label = [data.alias, data.teamId ? `team ${data.teamId}` : ''].filter(Boolean).join(' · ');
         applyTokenToUI(label, false);
       }).catch(() => {});
