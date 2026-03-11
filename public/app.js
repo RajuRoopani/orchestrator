@@ -96,7 +96,14 @@ function sendMessage() {
     body: JSON.stringify({ message: text }),
   })
     .then((r) => safeJson(r))
-    .then((d) => { if (!d.success) throw new Error(d.error || 'Unknown error'); })
+    .then((d) => {
+      if (!d.success) throw new Error(d.error || 'Unknown error');
+      // Fallback: if WebSocket missed the plan_ready event, finalize from HTTP response
+      if (d.plan && !plans.has(d.plan.id)) {
+        plans.set(d.plan.id, d.plan);
+        finalizePlanStream(d.plan);
+      }
+    })
     .catch((err) => {
       clearPlanningTimer();
       showToast('Failed: ' + err.message, 'error');

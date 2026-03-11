@@ -422,7 +422,7 @@ app.post('/api/plan', async (req, res) => {
     plans.set(plan.id, plan);
     latestPlanId = plan.id;
     wsManager.broadcast({ type: 'plan_ready', plan });
-    res.json({ success: true, planId: plan.id, taskCount: plan.tasks.length });
+    res.json({ success: true, planId: plan.id, taskCount: plan.tasks.length, plan });
   } catch (err) {
     const msg = (err as Error).message;
     console.error('[API] Plan generation failed:', msg);
